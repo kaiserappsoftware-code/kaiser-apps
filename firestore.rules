@@ -1,0 +1,208 @@
+rules_version = '2';
+// Peraturan keselamatan Firestore untuk Apps Kaiser — Peringkat 1 (model KUASA & pendaftaran pekerja).
+// Salin semua kandungan fail ini ke Firebase console → Firestore Database → Rules → Publish.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function doc(c, id) { return /databases/$(database)/documents/$(c)/$(id); }
+
+    // ---------- Identiti ----------
+    // Akaun PIN dipetakan kepada profil tetap melalui `akses`. PIN sementara tamat selepas 7 hari:
+    // akaun sementara yang tamat tidak dikenali (pid kosong), jadi semua akses ditolak.
+    function aksesPath() { return doc('akses', request.auth.uid); }
+    function aksesSah() {
+      return get(aksesPath()).data.get('sementara', false) == false
+        || get(aksesPath()).data.tamat > request.time;
+    }
+    function pid() {
+      return exists(aksesPath()) ? (aksesSah() ? get(aksesPath()).data.profil : '_tamat') : request.auth.uid;
+    }
+    function userPath() { return doc('users', pid()); }
+    function prof() { return get(userPath()).data; }
+    function active() { return signedIn() && exists(userPath()) && prof().get('aktif', true) != false; }
+    function role() { return prof().get('peranan', ''); }
+
+    // ---------- Kuasa ----------
+    // Pengarah Utama (Dato' & Datin): semua kuasa. Peranan lama 'pengarah' dikira Pengarah Utama.
+    function utama() { return active() && (prof().get('pengarahUtama', false) == true || role() == 'pengarah'); }
+    function kuasa(k) { return active() && prof().get('kuasa', {}).get(k, false) == true; }
+    function kuasaAdmin(k) { return kuasa('aksesAdmin') && kuasa(k); }
+    function adaKuasa() { return active() && prof().get('kuasa', {}).size() > 0; }
+    function skopSaya() { return prof().get('skopKumpulan', []); }
+    function dalamSkop(kid) { return utama() || skopSaya().hasAny(['semua']) || skopSaya().hasAny([kid]); }
+    function bolehDaftar() { return utama() || kuasa('tetapanPekerja') || kuasaAdmin('daftarPekerja'); }
+    // Peranan lama (Fasa 1) yang masih guna Apps Pengurusan dengan emel.
+    function isPengarah() { return utama(); }
+    function isPengurus() { return active() && (role() in ['pengurus', 'pengarah'] || utama()); }
+    function isAdmin() { return active() && (role() in ['pengurus', 'pengarah', 'akaun'] || utama()); }
+    function own(d) { return d.userId == pid(); }
+    // Migrasi: Pengarah Utama boleh mengisi kumpulanId / projekId pada rekod lama (tiada medan lain berubah).
+    function isiKumpulan() { return utama() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['kumpulanId', 'projekId']); }
+    function bootstrapped() { return exists(doc('meta', 'bootstrap')); }
+
+    // Pekerja "biasa": tiada kuasa, bukan Pengarah Utama, tiada skop. Hanya jenis ini boleh diurus oleh pemegang 🆔 / 👥.
+    function biasa(d) {
+      return d.get('kuasa', {}).size() == 0 && d.get('pengarahUtama', false) == false
+        && d.get('skopKumpulan', []).size() == 0 && d.get('peranan', 'pekerja') in ['pekerja', 'penyelia'];
+    }
+    // Medan borang kerja yang boleh diubah oleh pemegang 🆔 / 👥 (bukan kuasa, templat, gaji, IC atau bank).
+    function medanAsas() {
+      return ['nama', 'jawatan', 'jenis', 'telefon', 'tarikhMula', 'waris', 'kumpulanId', 'projekId', 'aktif', 'akaunApps', 'authUid', 'ver'];
+    }
+    function bolehUrus(lama, baru) {
+      return bolehDaftar() && biasa(lama) && biasa(baru) && dalamSkop(lama.get('kumpulanId', '')) && dalamSkop(baru.get('kumpulanId', ''));
+    }
+    // Profil sasaran selepas tulisan (berfungsi untuk pendaftaran baharu dalam batch yang sama).
+    function sasaran(p) { return getAfter(doc('users', p)).data; }
+    function bolehUrusProfil(p) {
+      return utama() || (bolehDaftar() && p != pid() && biasa(sasaran(p)) && dalamSkop(sasaran(p).get('kumpulanId', '')));
+    }
+
+    // Pengguna pertama yang log masuk menjadi Pengarah (sekali sahaja).
+    match /meta/bootstrap {
+      allow read: if signedIn();
+      allow create: if signedIn() && !bootstrapped()
+        && getAfter(userPath()).data.peranan == 'pengarah';
+    }
+
+    // ---------- Profil kerja ----------
+    match /users/{uid} {
+      allow read: if utama() || isAdmin() || (signedIn() && pid() == uid)
+        || (adaKuasa() && dalamSkop(resource.data.get('kumpulanId', '')));
+      allow create: if utama()
+        || (bolehDaftar() && bolehUrus(request.resource.data, request.resource.data))
+        || (signedIn() && request.auth.uid == uid && !bootstrapped()
+            && existsAfter(doc('meta', 'bootstrap'))
+            && request.resource.data.peranan == 'pengarah');
+      allow update: if utama()
+        // Pemegang 🆔 / 👥: medan asas pekerja biasa dalam kumpulannya, bukan diri sendiri.
+        || (uid != pid() && bolehUrus(resource.data, request.resource.data)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(medanAsas()))
+        // Pekerja sendiri: hanya akaunApps (tukar PIN pertama kali, kunci telefon bila belum dikunci) dan tarikh persetujuan PDPA.
+        || (active() && uid == pid()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['akaunApps', 'pdpa'])
+            && (resource.data.get('akaunApps', {}).get('peranti', null) == null
+                || request.resource.data.akaunApps.get('peranti', null) == resource.data.akaunApps.peranti));
+    }
+
+    // Gaji, IC, bank. Baca: Pengarah Utama + pemegang 💰. Tulis: Pengarah Utama sahaja.
+    match /sulit/{uid} {
+      allow read: if utama() || kuasaAdmin('gaji');
+      allow write: if utama();
+    }
+
+    // Pemetaan akaun log masuk PIN → profil pekerja.
+    match /akses/{authUid} {
+      allow get: if signedIn() && (request.auth.uid == authUid || utama());
+      allow list: if utama();
+      allow create: if bolehUrusProfil(request.resource.data.profil)
+        && (utama() || (request.resource.data.sementara == true
+            && request.resource.data.tamat <= request.time + duration.value(8, 'd')));
+      // Pekerja menukar PIN sementara kepada PIN sendiri (sebelum tamat).
+      allow update: if utama()
+        || (signedIn() && request.auth.uid == authUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sementara'])
+            && request.resource.data.sementara == false && resource.data.tamat > request.time);
+      allow delete: if utama() || bolehUrusProfil(resource.data.profil);
+    }
+
+    // ID pekerja → emel log masuk dalaman. Dibaca sebelum log masuk (tiada data peribadi).
+    match /idmap/{staffId} {
+      allow get: if true;
+      allow list: if utama();
+      allow create, update: if utama() || bolehUrusProfil(request.resource.data.profil);
+    }
+
+    // Kunci telefon: satu telefon untuk satu pekerja.
+    match /peranti/{devId} {
+      allow get: if signedIn();
+      allow list: if utama();
+      allow create: if active() && request.resource.data.profil == pid();
+      allow delete: if utama() || resource.data.profil == pid() || bolehUrusProfil(resource.data.profil);
+    }
+
+    match /templat/{id} {
+      allow read: if active();
+      allow write: if utama();
+    }
+    match /kumpulan/{id} {
+      allow read: if active();
+      allow write: if utama();
+    }
+
+    // Log Pengelola: cipta sahaja (oleh diri sendiri, masa pelayan). Tidak boleh diubah atau dipadam.
+    match /logPengelola/{id} {
+      allow read: if utama();
+      allow create: if active() && request.resource.data.oleh == pid() && request.resource.data.masa == request.time;
+    }
+
+    // Memo & pengumuman kepada Apps Pekerja. Pengarah Utama: semua; pemegang kuasa: hanya kumpulan dalam skopnya.
+    match /memo/{id} {
+      allow read: if active();
+      allow create: if utama()
+        || (adaKuasa() && request.resource.data.oleh == pid()
+            && (skopSaya().hasAny(['semua'])
+                || (request.resource.data.kumpulan.size() > 0 && request.resource.data.kumpulan.hasOnly(skopSaya()))));
+      allow delete: if utama() || (active() && resource.data.oleh == pid());
+    }
+
+    match /settings/{d} {
+      allow read: if active();
+      allow write: if utama();
+    }
+
+    match /kod/{id} {
+      allow read: if active();
+      allow create: if isPengurus()
+        || (active() && request.resource.data.jenis == 'VO' && own(request.resource.data) && request.resource.data.semak == 'dihantar');
+      allow update: if isAdmin();
+    }
+
+    match /laporan/{id} {
+      allow read: if isAdmin() || (active() && own(resource.data));
+      allow create: if active() && own(request.resource.data) && request.resource.data.status == 'dihantar';
+      allow update: if isPengurus() || isiKumpulan()
+        || (active() && own(resource.data) && own(request.resource.data)
+            && resource.data.status == 'dikembalikan' && request.resource.data.status == 'dihantar');
+    }
+
+    match /belian/{id} {
+      allow read: if isAdmin() || (active() && own(resource.data));
+      allow create: if active() && own(request.resource.data) && request.resource.data.status == 'dihantar';
+      allow update: if isPengurus() || isiKumpulan()
+        || (active() && own(resource.data) && own(request.resource.data)
+            && resource.data.status == 'dikembalikan' && request.resource.data.status == 'dihantar');
+    }
+
+    match /hadir/{id} {
+      allow read: if isAdmin() || (active() && own(resource.data));
+      allow create: if active() && own(request.resource.data);
+      allow update: if isiKumpulan()
+        || (active() && own(resource.data) && own(request.resource.data));
+    }
+
+    // Permohonan staf: cuti, tuntutan, petty cash, pendahuluan gaji.
+    match /mohon/{id} {
+      allow read: if isAdmin() || (active() && own(resource.data));
+      allow create: if active() && own(request.resource.data) && request.resource.data.status == 'dihantar';
+      allow update: if (isAdmin() && resource.data.userId != pid()) || isiKumpulan()
+        || (active() && own(resource.data) && own(request.resource.data)
+            && resource.data.status == 'dihantar' && request.resource.data.status == 'dibatalkan');
+    }
+
+    match /tunai/{id} { allow read, create: if isAdmin(); }
+    match /kiraan/{id} { allow read, create: if isAdmin(); }
+
+    match /audit/{id} {
+      allow read: if utama();
+      allow create: if active() && own(request.resource.data);
+    }
+
+    // Gambar disimpan sebagai dokumen berasingan (pelan Spark, tanpa Cloud Storage).
+    match /gambar/{id} {
+      allow read: if isAdmin() || (active() && resource.data.ownerId == pid());
+      allow create: if active() && request.resource.data.ownerId == pid()
+        && request.resource.data.data is string && request.resource.data.data.size() < 1000000;
+    }
+  }
+}
