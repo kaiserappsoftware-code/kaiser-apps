@@ -190,6 +190,34 @@ service cloud.firestore {
             && resource.data.status == 'dihantar' && request.resource.data.status == 'dibatalkan');
     }
 
+    // ---------- Buku petty cash ----------
+    // Rekod: Pengarah Utama, 💵 tunaiTapak (Site Manager) atau 💵 adminTunai. Semak: Pengarah Utama atau ✅ adminSemak
+    // (Operations Manager). Tiada sesiapa boleh mengubah status rekod sendiri. Tiada pemadaman: pembetulan = entri songsang.
+    function bukuRekod() { return utama() || kuasa('tunaiTapak') || kuasaAdmin('adminTunai'); }
+    function bukuSemak() { return utama() || kuasaAdmin('adminSemak'); }
+    match /bukuTunai/{id} {
+      allow read: if bukuRekod() || bukuSemak();
+      allow create: if (utama() && ((request.resource.data.jenis == 'buka' && request.resource.data.status == 'disahkan')
+                                    || (request.resource.data.jenis in ['masuk', 'keluar'] && request.resource.data.status == 'dihantar')))
+        || (bukuRekod() && request.resource.data.oleh == pid() && request.resource.data.status == 'dihantar'
+            && request.resource.data.jenis in ['masuk', 'keluar'] && request.resource.data.jumlah is number && request.resource.data.jumlah > 0);
+      allow update:
+        // Pengarah Utama: boleh betulkan medan, tetapi tidak boleh mengubah status rekod sendiri.
+        if (utama() && (resource.data.oleh != pid() || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])))
+        // Penyemak: sahkan atau kembalikan rekod orang lain sahaja.
+        || (bukuSemak() && resource.data.oleh != pid()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'disemakOleh', 'disemakMasa', 'nota', 'history'])
+            && request.resource.data.status in ['disahkan', 'dikembalikan'])
+        // Perekod: tambah resit pada rekod sendiri yang belum disahkan, dan hantar semula.
+        || (resource.data.oleh == pid() && resource.data.status in ['dihantar', 'dikembalikan']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['resit', 'noResit', 'status', 'history'])
+            && request.resource.data.status == 'dihantar');
+    }
+    match /bopa/{id} {
+      allow read: if active();
+      allow create, update: if utama() || kuasa('projek') || kuasaAdmin('adminKumpulan');
+    }
+
     match /tunai/{id} { allow read, create: if isAdmin(); }
     match /kiraan/{id} { allow read, create: if isAdmin(); }
 

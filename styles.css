@@ -187,3 +187,6 @@ body::before{content:"";position:fixed;inset:0;background:url("icon-512.png") ce
   .side a.mk.on{display:flex;flex:1 1 100%}
   .side.buka a.mk{display:flex;flex:1 1 calc(50% - 6px);white-space:normal;font-size:13px}
 }
+
+/* Buku petty cash */
+.ftag{display:inline-block;background:var(--warn-bg);color:var(--warn);border-radius:6px;padding:1px 6px;font-size:11px;font-weight:600;margin:3px 4px 0 0}

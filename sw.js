@@ -1,6 +1,6 @@
 // Service worker: simpan fail apps supaya boleh dibuka tanpa internet.
-const CACHE = 'kaiser-v20';
-const FILES = ['./', './index.html', './styles.css', './app.js', './akaun-lib.js', './bahasa.js', './bahasa-en.js', './manifest.json', './icon-192.png', './icon-512.png', './icon-64.png', './firebase-config.js'];
+const CACHE = 'kaiser-v21';
+const FILES = ['./', './index.html', './styles.css', './app.js', './buku-tunai.js', './akaun-lib.js', './bahasa.js', './bahasa-en.js', './manifest.json', './icon-192.png', './icon-512.png', './icon-64.png', './firebase-config.js'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));

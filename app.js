@@ -109,6 +109,13 @@
       ],
       tunai: [{ id: uid(), tarikh: d(1), jumlah: 2000, catatan: 'Imprest awal (contoh)', oleh: 'u5' }],
       kiraan: [], audit: [], kumpulan, templat: [], logPengelola: [],
+      bopa: [{ id: 'bp1', no: 'BOPA-DEMO-01', penerangan: 'Contoh: bahan penyelenggaraan', nilai: 20000, status: 'Aktif', tarikh: d(10) }],
+      bukuTunai: [
+        { id: 'buka-awal', tarikh: d(1), butiran: 'Baki bawa hadapan (B/F)', jenis: 'buka', jumlah: 150, kategori: 'B/F', status: 'disahkan', oleh: 'u1', resit: [], history: [] },
+        { id: uid(), tarikh: d(2), butiran: 'Top-up office (contoh)', jenis: 'masuk', jumlah: 1000, kategori: 'Top-up', status: 'disahkan', oleh: 'u3', resit: [], history: [] },
+        { id: uid(), tarikh: d(3), butiran: 'Petrol lori (contoh)', jenis: 'keluar', jumlah: 43, kategori: 'Petrol', pembekal: 'Petron', status: 'disahkan', oleh: 'u3', resit: [], history: [] },
+        { id: uid(), tarikh: d(4), butiran: 'Kabel dan suis (contoh)', jenis: 'keluar', jumlah: 125.5, kategori: 'Elektrik', pembekal: 'Focus', lokasi: 'Balok', noBOPA: 'BOPA-DEMO-01', status: 'dihantar', oleh: 'u3', resit: [], history: [] },
+      ],
       sulit: [{ id: 'u6', gajiAsas: 2200, elaun: 150, bank: 'Maybank (contoh)', noAkaun: '1234-xxxx (contoh)' }],
     };
   }
@@ -162,10 +169,11 @@
       listen('kod', fs.collection('kod'));
       ['laporan', 'belian', 'hadir', 'mohon'].forEach((c) => listen(c, admin ? fs.collection(c) : fs.collection(c).where('userId', '==', u.id)));
       if (admin) { listen('tunai', fs.collection('tunai')); listen('kiraan', fs.collection('kiraan')); }
+      if (BUKU && BUKU.bolehLihat(u)) { listen('bukuTunai', fs.collection('bukuTunai')); listen('bopa', fs.collection('bopa')); }
       this.unsubs.push(fs.collection('settings').doc('main').onSnapshot((d) => { db.settings = Object.assign({}, DEFAULT_SETTINGS, d.exists ? d.data() : {}); scheduleRender(); }, () => {}));
     },
   };
-  function emptyDb() { return { v: 1, settings: Object.assign({}, DEFAULT_SETTINGS), users: [], kod: [], belian: [], laporan: [], hadir: [], mohon: [], tunai: [], kiraan: [], audit: [], sulit: [], templat: [], kumpulan: [], logPengelola: [], memo: [] }; }
+  function emptyDb() { return { v: 1, settings: Object.assign({}, DEFAULT_SETTINGS), users: [], kod: [], belian: [], laporan: [], hadir: [], mohon: [], tunai: [], kiraan: [], audit: [], sulit: [], templat: [], kumpulan: [], logPengelola: [], memo: [], bukuTunai: [], bopa: [] }; }
 
   // Simpan gambar draf: mod awan → dokumen berasingan dalam koleksi `gambar`, rekod hanya simpan id.
   function persistPhotos(arr) {
@@ -430,6 +438,7 @@
         <a class="tile g-hr" href="#mohon-cuti">${I.cuti}<span>Mohon Cuti</span></a>
         <a class="tile g-ak" href="#mohon-tuntutan">${I.tuntut}<span>Tuntutan</span></a>
         <a class="tile g-ak" href="#mohon-pettycash">${I.dompet}<span>Petty Cash</span></a>
+        ${BUKU && BUKU.bolehLihat(u) ? `<a class="tile g-ak" href="#buku">${I.dompet}<span>Buku Petty Cash</span></a>` : ''}
         <a class="tile g-ak" href="#mohon-pendahuluan">${I.wang}<span>Pendahuluan Gaji</span></a>
         <a class="tile g-sy" href="#permohonan">${I.senarai}<span>Permohonan Saya</span></a>
         <a class="tile g-sy" href="#rekod">${I.senarai}<span>Rekod Kerja Saya</span></a>
@@ -558,7 +567,7 @@
     const u = me();
     const q = queueFor(u).length;
     // Menu dalam bentuk kad berwarna ikut bahagian: operasi (biru), pekerja (teal), akaun (hijau/kuning), sistem (ungu).
-    const MENU = { dash: ['🏠', 'op'], semak: ['✅', 'op'], hadir: ['🕘', 'hr'], pekerja: ['👥', 'hr'], mohon: ['📝', 'hr'], memo: ['📢', 'hr'], skop: ['📊', 'op'], vo: ['📣', 'op'], kod: ['🏷', 'op'], tunai: ['💵', 'ak'], eksport: ['📤', 'ak'], log: ['📜', 'sy'], tetapan: ['⚙️', 'sy'] };
+    const MENU = { dash: ['🏠', 'op'], semak: ['✅', 'op'], hadir: ['🕘', 'hr'], pekerja: ['👥', 'hr'], mohon: ['📝', 'hr'], memo: ['📢', 'hr'], skop: ['📊', 'op'], vo: ['📣', 'op'], kod: ['🏷', 'op'], tunai: ['💵', 'ak'], buku: ['📒', 'ak'], eksport: ['📤', 'ak'], log: ['📜', 'sy'], tetapan: ['⚙️', 'sy'] };
     const link = (r, label, extra) => { const [ik, g] = MENU[r] || ['•', 'op']; return `<a href="#a-${r}" class="mk g-${g} ${active === r ? 'on' : ''}"><span class="ik">${ik}</span><span class="lb">${label}</span>${extra || ''}</a>`; };
     return `<div class="admin">
       <nav class="side ${state.menuBuka ? 'buka' : ''}" aria-label="Menu pentadbiran">
@@ -573,6 +582,7 @@
         ${link('vo', 'Daftar VO')}
         ${link('kod', 'Kod kerja')}
         ${link('tunai', 'Tunai runcit')}
+        ${BUKU && BUKU.bolehLihat(u) ? link('buku', 'Buku petty cash') : ''}
         ${link('eksport', 'Eksport bulanan')}
         ${utama(u) || adaKuasa(u, 'pantauan') || Object.keys(u.kuasa || {}).length ? link('memo', 'Memo &amp; pengumuman') : ''}
         ${utama(u) ? link('log', 'Log kemasukan') : ''}
@@ -1638,7 +1648,7 @@
   }
 
   // ---------- Sandaran (Spark tiada sandaran automatik) ----------
-  const KOLEKSI_SANDARAN = ['users', 'sulit', 'akses', 'idmap', 'peranti', 'templat', 'kumpulan', 'settings', 'meta', 'kod', 'laporan', 'belian', 'hadir', 'mohon', 'tunai', 'kiraan', 'audit', 'logPengelola'];
+  const KOLEKSI_SANDARAN = ['users', 'sulit', 'akses', 'idmap', 'peranti', 'templat', 'kumpulan', 'settings', 'meta', 'kod', 'laporan', 'belian', 'hadir', 'mohon', 'tunai', 'kiraan', 'audit', 'logPengelola', 'bukuTunai', 'bopa'];
   function muatTurunFail(nama, teks, jenis) {
     const blob = new Blob([teks], { type: jenis || 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nama;
@@ -2119,14 +2129,14 @@
     if (parts[0] === 'a') {
       if (!isAdmin(u)) { location.hash = '#home'; return; }
       const v = parts[1] || 'dash';
-      const map = { hadir: viewAHadir, mohon: viewAMohon, dash: viewDash, semak: viewSemak, skop: () => (parts[2] ? viewSkop(parts[2]) : viewSkopList()), vo: viewVOList, kod: viewKod, tunai: viewTunai, eksport: viewEksport, tetapan: () => (utama(u) ? viewTetapan() : viewDash()), memo: viewMemoAdmin, log: () => (utama(u) ? viewLogKemasukan() : viewDash()),
+      const map = { hadir: viewAHadir, mohon: viewAMohon, dash: viewDash, semak: viewSemak, skop: () => (parts[2] ? viewSkop(parts[2]) : viewSkopList()), vo: viewVOList, kod: viewKod, tunai: viewTunai, buku: () => (BUKU ? BUKU.view() : viewDash()), eksport: viewEksport, tetapan: () => (utama(u) ? viewTetapan() : viewDash()), memo: viewMemoAdmin, log: () => (utama(u) ? viewLogKemasukan() : viewDash()),
         pekerja: () => ({ daftar: viewPekerjaDaftar, gaji: viewPekerjaGaji, jawatan: viewPekerjaJawatan, p: () => viewPekerjaProfil(parts[3]) }[parts[2]] || viewPekerjaSenarai)() };
       app.innerHTML = (map[v] || viewDash)();
     } else {
       const v = (parts[0] && parts[0] !== 'mula') ? parts[0] : (isAdmin(u) && APP !== 'pekerja' ? 'admin' : 'home');
       if (v === 'admin') { location.hash = '#a-dash'; return; }
-      if (!['laporan', 'belian', 'vo', 'hadir', 'mohon'].includes(v)) state.draft = null;
-      const map = { pin: viewPin, home: viewHome, laporan: () => viewLaporan(parts[1]), belian: () => viewBelian(parts[1]), vo: viewVO, rekod: viewRekod, hadir: viewHadir, mohon: () => viewMohon(parts[1]), permohonan: viewPermohonanSaya };
+      if (!['laporan', 'belian', 'vo', 'hadir', 'mohon', 'buku'].includes(v)) state.draft = null;
+      const map = { pin: viewPin, home: viewHome, laporan: () => viewLaporan(parts[1]), belian: () => viewBelian(parts[1]), vo: viewVO, rekod: viewRekod, hadir: viewHadir, mohon: () => viewMohon(parts[1]), permohonan: viewPermohonanSaya, buku: () => (BUKU ? BUKU.view() : viewHome()) };
       app.innerHTML = (map[v] || viewHome)();
     }
     if (state.lastHash !== hash) window.scrollTo(0, 0);
@@ -2149,6 +2159,12 @@
     if (f2) Object.entries(vals).forEach(([k, v]) => { const el = f2.elements.namedItem(k); if (el && el.type !== 'file') el.value = v; });
   }
 
+  // ---------- Buku petty cash (modul berasingan: buku-tunai.js) ----------
+  const BUKU = window.KaiserBuku ? window.KaiserBuku.buat({
+    APP, db: () => db, state, me, esc, uid, today, num, rm, fmtDate, pill, commit, toast, render, openModal, closeModal, confirmInline,
+    adminShell, topbar, persistPhotos, photoGrid, imgAttr, utama, adaKuasa, adaAdmin, userName,
+  }) : null;
+
   // ---------- Tindakan ----------
   const A = {
     login(el) { state.userId = el.dataset.id; Store.setUser(state.userId); location.hash = APP === 'urus' ? '#a-dash' : '#home'; render(); },
@@ -2167,6 +2183,7 @@
     ...STAF_ACTIONS,
     ...PK_ACTIONS,
     ...MOD2_ACTIONS,
+    ...(BUKU ? BUKU.actions : {}),
     rmPhoto(el) { state.draft[el.dataset.f].splice(Number(el.dataset.i), 1); refreshPhotos(el.dataset.f); },
     setBayaran(el) { state.draft.bayaran = el.dataset.v; rerenderKeepForm(); },
     setSkop(el) { state.draft.skop = el.dataset.v; rerenderKeepForm(); },
@@ -2214,6 +2231,7 @@
 
   const CHANGE = {
     ...STAF_CHANGE,
+    ...(BUKU ? BUKU.change : {}),
     setBulan(el) { state.bulan = el.value; render(); },
     voStatus(el) { const k = kodOf(el.dataset.id); k.voStatus = el.value; (k.history = k.history || []).push({ t: new Date().toISOString(), by: state.userId, act: 'Status VO: ' + el.value }); commit('status VO', k.id, [['kod', k]]); toast('Status VO dikemas kini'); },
   };
@@ -2222,6 +2240,7 @@
     ...STAF_FORMS,
     ...PK_FORMS,
     ...MOD2_FORMS,
+    ...(BUKU ? BUKU.forms : {}),
     laporan(fd, form) {
       const id = state.draft._id;
       const data = { tarikh: fd.tarikh, kodId: fd.kodId, lokasi: fd.lokasi.trim(), tugas: fd.tugas.trim(), pekerja: fd.pekerja.trim(), jam: num(fd.jam), bahan: fd.bahan.trim(), gambar: persistPhotos(state.draft.gambar) };
@@ -2406,7 +2425,7 @@
     scheduleRender._t = setTimeout(() => {
       const ae = document.activeElement;
       const typing = ae && ae.closest && ae.closest('#app') && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName);
-      const onForm = /^#?(laporan|belian|vo|hadir|mohon)(-|$)/.test(location.hash.replace(/^#/, '')) && state.draft;
+      const onForm = /^#?(laporan|belian|vo|hadir|mohon|buku|a-buku)(-|$)/.test(location.hash.replace(/^#/, '')) && state.draft;
       if (typing || onForm) { state.pendingRender = true; return; }
       state.pendingRender = false;
       if ($('form[data-form]')) rerenderKeepForm(); else render();
