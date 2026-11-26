@@ -1649,8 +1649,20 @@
     if (CLOUD) {
       const senarai = KOLEKSI_SANDARAN.concat(denganGambar ? ['gambar'] : []);
       for (const c of senarai) {
-        const snap = await fs.collection(c).get();
-        out.data[c] = snap.docs.map((d) => Object.assign({ id: d.id }, d.data()));
+        if (c === 'meta') {
+          // Rules hanya membenarkan dokumen meta/bootstrap, bukan senarai koleksi meta.
+          const m = await fs.collection('meta').doc('bootstrap').get();
+          out.data[c] = m.exists ? [Object.assign({ id: m.id }, m.data())] : [];
+          continue;
+        }
+        try {
+          const snap = await fs.collection(c).get();
+          out.data[c] = snap.docs.map((d) => Object.assign({ id: d.id }, d.data()));
+        } catch (e) {
+          // Nyatakan koleksi yang gagal supaya punca mudah dikesan.
+          e.message = `[${c}] ` + (e.message || '');
+          throw e;
+        }
       }
       await fs.collection('settings').doc('main').set({ sandaranTerakhir: out.masa }, { merge: true });
     } else {
